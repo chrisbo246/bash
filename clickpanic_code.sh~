@@ -1,0 +1,290 @@
+#/bin/bash
+# ------------------------------------------------------------------------------
+code_menu()
+{
+  while true; do
+    __menu \
+    -t 'File format' \
+    -o 'HTML' \
+    -o 'PHP' \
+    -o 'CSS' \
+    -o 'Bash'    
+    
+    case $REPLY in
+      1 ) select_code_file '*.html?';;
+      2 ) select_code_file '*.php';;
+      3 ) select_code_file '*.css';;
+      4 ) select_code_file '*.sh';;
+    esac
+  done
+}
+# ------------------------------------------------------------------------------
+select_code_file()
+{
+  while true; do
+    unset options
+    for value in $(ls -a1r "$1"); do
+      options="${options} -o $value"
+    done
+    __menu -t 'File' $options
+    
+    select_code_action "$VALUE"
+  done
+}
+# ------------------------------------------------------------------------------
+select_code_action()
+{
+  while true; do
+    __menu \
+    -t 'Code' \
+    -o 'Join script functions' \
+    -o 'Beautify bash script' \
+    -o 'Convert line endings' \
+    -o 'Clean CSS'
+    
+    case $REPLY in
+      1 ) join_script_functions "$1";;
+      2 ) beautify_bash_script "$1";;
+      3 ) convert_line_endings "$1";;
+      4 ) clean_css "$1";;
+    esac
+  done
+}
+# ------------------------------------------------------------------------------
+join_script_functions()
+{
+  
+  filename='functions.sh'
+  insert='#/bin/bash'
+  regex='.*\.sh'
+  verbose=0
+  
+read -d '' help <<-EOF
+NAME
+    ${0##*/} - Join functions from several files
+
+SYNOPSIS
+    ${0##*/} [-f|--filename] [-i|--insert] [-r|--regex]
+    ${0##*/} [-h|--help]
+
+OPTIONS
+    -f, --filename
+        Functions will be copied to this file (default: '$filename').
+    -i, --insert
+        Insert one or more lines to the head of the file (default: '$insert').
+    -r, --regex
+        find script files using this regular expression (default: '$regex').
+    -h, --help
+        Display this help screen.
+    -v, --verbose
+        Print details.
+
+AUTHOR
+    Written by Christophe BOISIER.
+
+REPORTING BUGS
+    Report bugs to christophe.boisier@live.fr
+
+COPYRIGHT
+    Copyright (c) 2013 Christophe BOISIER License GPLv3+: GNU GPL version 3 or later <http://gnu.org/licenses/gpl.html>.
+EOF
+  
+  ARGS=$(getopt -o "+f:i:r:hv" -l "+filename:;insert:;regex:;help,verbose" -n "$0" -- "$@")
+  eval set -- "$ARGS";
+  while true; do
+    case "$1" in
+      -f|--filename) shift; filename=${1:-$filename}; shift;;
+      -i|--insert) shift; insert=${1:-$insert}; shift;;
+      -r|--regex) shift; regex=${1:-$regex}; shift;;
+      -h|--help) shift; printf "${IFS}$help${IFS}${IFS}"; break;;
+      -v|--verbose) shift; verbose=1;;
+      --) shift; break;;
+    esac
+  done
+  
+  [ -n "$insert" ] && echo -e "$insert" > "$filename"
+  
+  while read line; do
+    beautify_bash_script "$line"
+    if [[ $? == 0 ]]; then
+      [[ $verbose == 1 ]] && echo "Copying functions from '$line' to '$filename'."
+      echo -e "${IFS}${IFS}################################################################################${IFS}# ${line##*/}${IFS}################################################################################${IFS}${IFS}" >> "$filename"
+      sed -n -r '/^[ \t]*(function[ \t]+)?[a-zA-Z_]+[ \t]*\(\)/,/^}/p' "$line" >> "$filename"
+    else
+      [[ $verbose == 1 ]] && echo "Script '$line' contain errors and will be skipped'."
+    fi
+  done < <(find . -type f -regex "$regex")
+  
+  beautify_bash_script "$filename"
+}
+# ------------------------------------------------------------------------------
+beautify_bash_script()
+{
+  beautifier=$(find /usr/local -type f -name beautify_bash.py)
+  if [ -f "$beautifier" ]; then
+    [ -z "$(which python)" ] && apt-get install python    
+  else
+    beautifier='/usr/local/bin/beautify_bash.py'
+    wget -O "$beautifier" http://arachnoid.com/python/python_programs/beautify_bash.py    
+  fi
+  python "$beautifier" $@
+}
+# ------------------------------------------------------------------------------
+convert_line_endings()
+{
+  dst_type='LF'
+  dst_file=$src_file
+  #${IFS}
+  
+  ARGS=$(getopt -o "d:muwh" -l "destination:,mac,unix,windows,help" -n "$0" -- "$@")
+  eval set -- "$ARGS";
+  while true; do
+    case "$1" in
+      -m|--mac) shift; dst_type='CR';;
+      -u|--unix) shift; dst_type='LF';;      
+      -w|--windows) shift; dst_type='CR/LF';;
+      -d|--destination) shift; destination=${1:-$dst_file}; shift;;
+      -h|--help) shift; printf "${IFS}$help${IFS}${IFS}"; break;;
+      --) shift; break;;
+    esac
+  done
+
+  src_type="$(file "$1" | sed 's/.*with //' | sed 's/ .*//')"
+ 
+  case $src_type in
+    'CR' )
+      # Convert from legacy Mac-style CR line endings
+      # to UNIX-style LF line endings for use with
+      # command-line tools
+      [ "$dst_type" == 'LF' ] && tr '\r' '\n' < $src_file > $dst_file
+      break
+      ;;
+    'LF' )     
+      # Convert from UNIX-style LF to legacy Mac-style CR
+      # line endings
+      [ "$dst_type" == 'CR' ] && tr '\n' '\r' < $src_file > $dst_file
+      # Convert from UNIX-style LF line endings to
+      # Windows-style CR/LF line endings
+      CR=$(printf "\r")
+      [ "$dst_type" == 'CR/LF' ] && sed "s/$/$CR/" < unix_text_file > windows_text_file
+      break
+      ;;
+    'CR/LF'|'LF/CR' )
+      # Convert from Windows-style CR/LF line endings (or
+      # LF/CR line endings) to UNIX line endings
+      [ "$dst_type" == 'CR/LF' ] && tr -d '\r' < $src_file > $dst_file
+      break
+    ;;
+  * )
+    # Most versions of the "file" command can't detect
+    # LFCR line endings, so do this even if the file
+    # appears to have UNIX line endings.
+    #DATA="$(tr -d '\r' < "$1")"
+  esac
+
+}
+# ------------------------------------------------------------------------------
+clean_css()
+{
+read -d '' usage <<-EOF
+Clean CSS file.
+Usage: `basename $0 .sh` 'filename'
+EOF
+
+case $# in
+  1);;
+  *) echo -e $usage 1>&2; exit 65
+esac
+
+filename="$1"
+
+if [ ! -e "$filename" ]; then
+  echo "$filename do not exists !"
+	exit
+fi
+
+# Replace tabulations by 2 spaces
+sed -i -r "s#[ \t]+$#  #g" "$filename"
+# Remove most white spaces between code
+sed -i -r "s/[ \t]*(\{|\}|\]|\(|:|,|\!important|;| )[ \t]*/\1/g" "$filename"
+# Remove white spaces at line start / end
+sed -i -r "s#(^[ \t]*|^[ \t]*$)##g" "$filename"
+# Remove optionnal caracters
+sed -i -r "s#[0]+(\.)#\1#g" "$filename"
+
+}
+# ------------------------------------------------------------------------------
+print_envs()
+{
+read -d '' varnames <<-EOF
+PATH
+MANPATH
+LD_LIBRARY_PATH
+TMPDIR
+LANG
+LC_CTYPE
+LC_NUMERIC
+LC_TIME
+LC_COLLATE
+LC_MONETARY
+LC_MESSAGES
+LC_PAPER
+LC_NAME
+LC_ADDRESS
+LC_TELEPHONE
+LC_MEASUREMENT
+LC_IDENTIFICATION
+LC_ALL
+PAGER
+EDITOR
+VISUAL
+BROWSER
+DISPLAY
+XDG_DATA_HOME
+XDG_CONFIG_HOME
+XDG_DATA_DIRS
+XDG_CONFIG_DIRS
+XDG_CACHE_HOME
+NAUTILUS_SCRIPT_SELECTED_FILE_PATHS
+NAUTILUS_SCRIPT_SELECTED_URIS
+NAUTILUS_SCRIPT_CURRENT_URI
+NAUTILUS_SCRIPT_WINDOW_GEOMETRY
+LD_PRELOAD
+CC
+CFLAGS
+CXXFLAGS
+CPPFLAGS
+LIBRARY_PATH
+INCLUDE
+CPATH
+USERNAME
+LOGNAME
+HOME
+PWD
+SHELL
+POSIXLY_CORRECT
+HOSTALIASES
+TZDIR
+TZ
+TERM
+TERMCAP
+COLUMNS
+LINES
+http_proxy
+HTTP_PROXY
+FUNCNAME
+EOF
+  
+  
+  printenv
+  #envs=$(printenv)
+  #echo "-------------------------------------"
+  #varnames=$(echo -e "$varnames" | sort)
+  #for varname in $varnames; do
+  #  [ -n "${!varname}" -a -z "$(echo -e $envs | grep '^'$varname'=')" ] && echo "${varname}="${!varname}
+  #done
+
+}
+# ------------------------------------------------------------------------------
+
+script_short_description='Developer useful functions'; script_prefix='clickpanic_'; [[ ! "$(declare -Ff 'menu')" ]] && . $( echo `dirname $0`/ )${script_prefix}helpers.sh
